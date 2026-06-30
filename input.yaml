@@ -1,0 +1,9 @@
+elements:
+  - Ni
+  - Al
+api_key: "aWHXB9kKT4Cfa3Bsti0OAXU69C1g7jfX"
+potential: "/home/maniykxj/.cache/grace/GRACE-2L-SMAX-OMAT-large"
+lammps_exec: "/home/maniykxj/miniconda3/envs/speed_02/bin/lmp"
+pair_style: "pair_style grace"
+pair_coeff: "pair_coeff * * /home/maniykxj/.cache/grace/GRACE-2L-SMAX-OMAT-large Ni Al"
+output_dir: "/home/maniykxj/ConvexHull_Workflow/test_run3"

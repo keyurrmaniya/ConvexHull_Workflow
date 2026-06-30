@@ -1,0 +1,23 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore LAMMPS test runs and output directories
+test_run/
+test_run*/
+hull_workflow_output/
+
+# Ignore Slurm logs
+workflow_*.log
+workflow_*.err
+*.out
+
+# Ignore cache files
+mp_docs_cache.pkl
+
+# Ignore Jupyter
+.ipynb_checkpoints/
+
+# Ignore python environment paths if any
+.env
+venv/
