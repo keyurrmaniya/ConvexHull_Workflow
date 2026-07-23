@@ -433,7 +433,7 @@ def main():
                                 labeled_points[label_key] = True
                                 formatted_form = format_formula(form)
                                 plt.annotate(formatted_form, (x_val, y_val), 
-                                         textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=10)
+                                         textcoords="offset points", xytext=(0,-10), ha='center', va='top', fontsize=10)
                 except Exception as e:
                     print(f"Error plotting convex hull for {model_name}: {e}")
                     # If error, plot all as hollow
@@ -451,6 +451,9 @@ def main():
         plt.axhline(0, color='black', linestyle='--', linewidth=1)
         plt.legend(fontsize=12)
         plt.grid(True, linestyle=':', alpha=0.6)
+        
+        ymin, ymax = plt.ylim()
+        plt.ylim(ymin - 0.1 * (ymax - ymin), ymax)
         
         general_output_dir = "comparison_output"
         if len(models) == 1:
