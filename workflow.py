@@ -433,8 +433,7 @@ def main():
                                 labeled_points[label_key] = True
                                 formatted_form = format_formula(form)
                                 plt.annotate(formatted_form, (x_val, y_val), 
-                                         textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=10,
-                                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.9))
+                                         textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=10)
                 except Exception as e:
                     print(f"Error plotting convex hull for {model_name}: {e}")
                     # If error, plot all as hollow
