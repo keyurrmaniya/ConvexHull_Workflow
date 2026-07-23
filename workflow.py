@@ -386,13 +386,16 @@ def main():
             valid_points_list = [(v["x"], v["y"]) for v in min_energy_by_x.values()]
             valid_points = np.array(valid_points_list)
             
-            if len(valid_points) >= 3:
+            if len(valid_points) >= 2:
                 try:
-                    hull = ConvexHull(valid_points)
-                    
-                    hull_x = valid_points[hull.vertices, 0]
-                    hull_y = valid_points[hull.vertices, 1]
-                    
+                    if len(valid_points) >= 3:
+                        hull = ConvexHull(valid_points)
+                        hull_x = valid_points[hull.vertices, 0]
+                        hull_y = valid_points[hull.vertices, 1]
+                    else:
+                        hull_x = valid_points[:, 0]
+                        hull_y = valid_points[:, 1]
+                        
                     sort_idx = np.argsort(hull_x)
                     hull_x = hull_x[sort_idx]
                     hull_y = hull_y[sort_idx]
