@@ -163,7 +163,7 @@ def main():
         # Fallback to old format
         models = [{
             "name": "Model",
-            "potential": os.path.abspath(config.get("potential")),
+            "potential": os.path.abspath(config.get("potential")) if config.get("potential") else "",
             "lammps_exec": config.get("lammps_exec", "lmp"),
             "pair_style": config.get("pair_style", "pair_style pace"),
             "pair_coeff": config.get("pair_coeff"),
@@ -215,7 +215,7 @@ def main():
             model_name = model.get("name", "Model")
             print(f"\n--- Processing Model: {model_name} ---")
             
-            potential = os.path.abspath(model.get("potential"))
+            potential = os.path.abspath(model.get("potential")) if model.get("potential") else ""
             lammps_exec = model.get("lammps_exec", "lmp")
             pair_style = model.get("pair_style", "pair_style pace")
             pair_coeff = model.get("pair_coeff")
