@@ -8,6 +8,7 @@ A robust Python CLI tool for automating the calculation and plotting of binary s
 - Skip-aware: Resumes safely without recalculating completed structures
 - Automatic parsing of crystallographic Space Groups for plot labels
 - Generates a mathematically strictly-convex lower hull plot and a CSV of formation energies
+- **Multi-Model Comparison:** Run calculations for multiple potentials (e.g., GRACE and ACE) and compare their convex hulls on a single, beautifully formatted plot with smart, deduplicated structure labels.
 
 ## Installation
 
@@ -26,7 +27,31 @@ You can install this directly into any conda environment.
 
 ## Usage
 
-Create an `input.yaml` file defining your system:
+Create an `input.yaml` file defining your system. You can specify a single model or compare multiple models.
+
+### Multi-Model Comparison (Recommended)
+```yaml
+elements:
+  - Ni
+  - Al
+api_key: "YOUR_MP_API_KEY"
+compare_models: true
+models:
+  - name: "GRACE"
+    potential: "/path/to/grace"
+    lammps_exec: "lmp"
+    pair_style: "pair_style grace"
+    pair_coeff: "pair_coeff * * /path/to/grace Ni Al"
+    output_dir: "run_grace"
+  - name: "ACE"
+    potential: "/path/to/ace"
+    lammps_exec: "lmp"
+    pair_style: "pair_style pace"
+    pair_coeff: "pair_coeff * * /path/to/ace Ni Al"
+    output_dir: "run_ace"
+```
+
+### Single Model (Legacy Format)
 ```yaml
 elements:
   - Ni
@@ -44,10 +69,10 @@ lammps_exec: "lmp"
    ```bash
    convex_hull -i input.yaml --setup-only
    ```
-   This will download all structures and prepare the LAMMPS inputs in the `output_dir`.
+   This will download all structures and prepare the LAMMPS inputs in the designated `output_dir`(s).
 
 2. **On the Compute Node** (submit via Slurm script):
    ```bash
    convex_hull -i input.yaml
    ```
-   This will run LAMMPS offline in the prepared directories, extract all energies, and plot `convex_hull.png`.
+   This will run LAMMPS offline in the prepared directories, extract all energies, and plot the convex hull.
