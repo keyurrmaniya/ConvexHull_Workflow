@@ -432,8 +432,7 @@ def main():
                             if label_key not in labeled_points:
                                 labeled_points[label_key] = True
                                 formatted_form = format_formula(form)
-                                label_text = f"{formatted_form}\n({sg})" if sg else formatted_form
-                                plt.annotate(label_text, (x_val, y_val), 
+                                plt.annotate(formatted_form, (x_val, y_val), 
                                          textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=10,
                                          bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.9))
                 except Exception as e:
