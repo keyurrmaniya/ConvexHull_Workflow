@@ -36,6 +36,7 @@ elements:
   - Al
 api_key: "YOUR_MP_API_KEY"
 compare_models: true
+show_only_negative_energies: true  # Optional: set to true to hide structures with positive formation energy
 models:
   - name: "GRACE"
     potential: "/path/to/grace"

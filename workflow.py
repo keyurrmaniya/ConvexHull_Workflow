@@ -346,13 +346,22 @@ def main():
         
         line_styles = ['-', '--', ':', '-.']
         labeled_points = {}  # { (round(x, 4), formula): True }
+        show_only_negative = config.get("show_only_negative_energies", False)
         
         for idx, (model_name, df) in enumerate(all_results.items()):
             style = line_styles[idx % len(line_styles)]
-            x_all = df[f"frac_{el_B}"].values
-            y_all = df["formation_energy"].values
             
-            plt.scatter(x_all, y_all, alpha=0.3, label=f'{model_name} All Structures')
+            if show_only_negative:
+                plot_df = df[df["formation_energy"] <= 0.05]
+                scatter_label = f'{model_name} Stable Structures'
+            else:
+                plot_df = df
+                scatter_label = f'{model_name} All Structures'
+                
+            x_all = plot_df[f"frac_{el_B}"].values
+            y_all = plot_df["formation_energy"].values
+            
+            plt.scatter(x_all, y_all, alpha=0.3, label=scatter_label)
             
             min_energy_by_x = {}
             for i, row in df.iterrows():
