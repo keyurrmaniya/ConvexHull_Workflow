@@ -10,7 +10,11 @@ import matplotlib.pyplot as plt
 from scipy.spatial import ConvexHull
 from mp_api.client import MPRester
 from pymatgen.io.ase import AseAtomsAdaptor
+from pymatgen.core import Composition, Element
 from ase.io import write
+import re
+import yaml
+import requests
 
 def get_structures(api_key, elements):
     """
@@ -50,15 +54,6 @@ def setup_lammps_dir(base_dir, doc, elements, potential_file, pair_style, pair_c
     data_file = os.path.join(dir_path, "data.lammps")
     write(data_file, atoms, format='lammps-data', specorder=elements)
     
-    # Calculate masses for LAMMPS input if needed, but read_data usually handles it
-    # However, sometimes LAMMPS requires mass explicitly. 
-    # ase.io.write includes masses if atom types are mapped.
-    
-    # Write LAMMPS input script
-    elements_str = " ".join(elements)
-    
-    # Generate mass commands
-    from pymatgen.core import Element
     mass_lines = ""
     for i, el_name in enumerate(elements):
         mass = float(Element(el_name).atomic_mass)
@@ -100,17 +95,12 @@ def run_lammps(dir_path, lammps_exec):
     
     print(f"Running LAMMPS in {dir_path}...")
     
-    # Check if already completed
     if os.path.exists(log_file):
         with open(log_file, 'r') as f:
             if "FINAL_ENERGY" in f.read():
                 print(f"Calculation already completed in {dir_path}. Skipping.")
                 return True
                 
-    
-    # Try to find python's tensorflow library path to add to LD_LIBRARY_PATH
-    import sys
-    import glob
     tf_lib_path = glob.glob(f"{sys.exec_prefix}/lib/python*/site-packages/tensorflow")
     ld_path_setup = f"export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{tf_lib_path[0]} && " if tf_lib_path else ""
     
@@ -118,8 +108,6 @@ def run_lammps(dir_path, lammps_exec):
     
     try:
         res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Even if it returns non-zero, check if the output file contains the result
-        # because ML potentials (like GRACE/Tensorflow) sometimes segfault on exit.
         if res.returncode != 0:
             print(f"LAMMPS returned non-zero exit code for {dir_path}, but checking if calculation finished.")
         return True
@@ -148,6 +136,10 @@ def parse_energy(dir_path):
         return energy, atoms
     return None, None
 
+def format_formula(formula):
+    # Format formula numbers into subscripts (e.g., Ni3Al -> Ni$_{3}$Al)
+    return re.sub(r'(\d+)', r'$_{\1}$', formula)
+
 def main():
     parser = argparse.ArgumentParser(description="LAMMPS Convex Hull Workflow")
     parser.add_argument("-i", "--input", dest="config", required=True, help="Path to input YAML configuration file")
@@ -155,30 +147,34 @@ def main():
     
     args = parser.parse_args()
     
-    import yaml
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
         
     elements = config.get("elements")
     api_key = config.get("api_key")
-    potential = os.path.abspath(config.get("potential"))
-    lammps_exec = config.get("lammps_exec", "lmp")
-    pair_style = config.get("pair_style", "pair_style pace")
-    pair_coeff = config.get("pair_coeff")
-    output_dir = config.get("output_dir", "hull_workflow_output")
     
+    compare_models = config.get("compare_models", False)
+    if "models" in config:
+        models = config["models"]
+        if not compare_models:
+            models = [models[0]]
+    else:
+        # Fallback to old format
+        models = [{
+            "name": "Model",
+            "potential": os.path.abspath(config.get("potential")),
+            "lammps_exec": config.get("lammps_exec", "lmp"),
+            "pair_style": config.get("pair_style", "pair_style pace"),
+            "pair_coeff": config.get("pair_coeff"),
+            "output_dir": config.get("output_dir", "hull_workflow_output")
+        }]
+        
     if len(elements) != 2:
         print("Warning: This script is currently optimized for binary systems plotting, but calculations will proceed.")
-        
-    if not pair_coeff:
-        elements_str = " ".join(elements)
-        pair_coeff = f"pair_coeff * * {potential} {elements_str}"
         
     # Phase 1: Get Structures
     docs = None
     
-    # Check for internet access to prevent infinite hanging on compute nodes
-    import requests
     try:
         requests.get("https://api.materialsproject.org", timeout=3)
         has_internet = True
@@ -196,217 +192,233 @@ def main():
         print("No internet access detected (likely running on a compute node).")
         print("Bypassing MP-API fetch and falling back to existing directories in output_dir...")
         
-    os.makedirs(output_dir, exist_ok=True)
+    all_results = {}
     
-    # Phase 2 & 3: Setup and Run LAMMPS
-    results = []
-    
-    if docs:
-        for doc in docs:
-            mp_id = doc.material_id
-            formula = doc.formula_pretty
+    for model in models:
+        model_name = model.get("name", "Model")
+        print(f"\n--- Processing Model: {model_name} ---")
+        
+        potential = os.path.abspath(model.get("potential"))
+        lammps_exec = model.get("lammps_exec", "lmp")
+        pair_style = model.get("pair_style", "pair_style pace")
+        pair_coeff = model.get("pair_coeff")
+        output_dir = model.get("output_dir", f"hull_workflow_output_{model_name}")
+        
+        if not pair_coeff:
+            elements_str = " ".join(elements)
+            pair_coeff = f"pair_coeff * * {potential} {elements_str}"
             
-            dir_path = setup_lammps_dir(output_dir, doc, elements, potential, pair_style, pair_coeff)
-            
+        os.makedirs(output_dir, exist_ok=True)
+        
+        results = []
+        
+        if docs:
+            for doc in docs:
+                mp_id = doc.material_id
+                formula = doc.formula_pretty
+                
+                dir_path = setup_lammps_dir(output_dir, doc, elements, potential, pair_style, pair_coeff)
+                
+                if args.setup_only:
+                    continue
+                    
+                success = run_lammps(dir_path, lammps_exec)
+                
+                if success:
+                    energy, n_atoms = parse_energy(dir_path)
+                    if energy is not None:
+                        sg_symbol = ""
+                        try:
+                            from ase.io import read
+                            from ase.spacegroup import get_spacegroup
+                            atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
+                            element_map = {i+1: el for i, el in enumerate(elements)}
+                            symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
+                            atoms.set_chemical_symbols(symbols)
+                            sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
+                        except Exception as e:
+                            pass
+                            
+                        res = {
+                            "mp_id": mp_id,
+                            "formula": formula,
+                            "spacegroup": sg_symbol,
+                            "energy": energy,
+                            "n_atoms": n_atoms,
+                            "energy_per_atom": energy / n_atoms
+                        }
+                        for el in elements:
+                            res[f"frac_{el}"] = doc.composition.get_atomic_fraction(el)
+                        results.append(res)
+        else:
             if args.setup_only:
+                print(f"Cannot run --setup-only without internet access for {model_name}. Skipping.")
                 continue
                 
-            success = run_lammps(dir_path, lammps_exec)
-            
-            if success:
-                energy, n_atoms = parse_energy(dir_path)
-                if energy is not None:
-                    # Extract spacegroup from data.lammps
-                    sg_symbol = ""
-                    try:
-                        from ase.io import read
-                        from ase.spacegroup import get_spacegroup
-                        atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
-                        element_map = {i+1: el for i, el in enumerate(elements)}
-                        symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
-                        atoms.set_chemical_symbols(symbols)
-                        sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
-                    except Exception as e:
-                        pass
+            if not os.path.exists(output_dir):
+                print(f"Directory {output_dir} does not exist. Skipping.")
+                continue
+                
+            existing_dirs = [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]
+            if not existing_dirs:
+                print(f"No existing directories found in {output_dir} and MP-API fetch failed. Skipping.")
+                continue
+                
+            print(f"Found {len(existing_dirs)} directories in {output_dir}. Running LAMMPS...")
+            for d in existing_dirs:
+                dir_path = os.path.join(output_dir, d)
+                parts = d.split("_")
+                if len(parts) != 2: continue
+                mp_id = parts[0]
+                formula = parts[1]
+                composition = Composition(formula)
+                
+                success = run_lammps(dir_path, lammps_exec)
+                
+                if success:
+                    energy, n_atoms = parse_energy(dir_path)
+                    if energy is not None:
+                        sg_symbol = ""
+                        try:
+                            from ase.io import read
+                            from ase.spacegroup import get_spacegroup
+                            atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
+                            element_map = {i+1: el for i, el in enumerate(elements)}
+                            symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
+                            atoms.set_chemical_symbols(symbols)
+                            sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
+                        except Exception as e:
+                            pass
+                            
+                        res = {
+                            "mp_id": mp_id,
+                            "formula": formula,
+                            "spacegroup": sg_symbol,
+                            "energy": energy,
+                            "n_atoms": n_atoms,
+                            "energy_per_atom": energy / n_atoms
+                        }
+                        for el in elements:
+                            res[f"frac_{el}"] = composition.get_atomic_fraction(el)
+                        results.append(res)
+                    else:
+                        print(f"Could not parse energy for {mp_id}")
                         
-                    res = {
-                        "mp_id": mp_id,
-                        "formula": formula,
-                        "spacegroup": sg_symbol,
-                        "energy": energy,
-                        "n_atoms": n_atoms,
-                        "energy_per_atom": energy / n_atoms
-                    }
-                    for el in elements:
-                        res[f"frac_{el}"] = doc.composition.get_atomic_fraction(el)
-                    results.append(res)
-    else:
-        # Fallback loop: if no docs fetched, just loop over existing directories
         if args.setup_only:
-            print("Cannot run --setup-only without internet access. Exiting.")
-            return
+            print(f"Setup complete for {model_name}!")
+            continue
             
-        from pymatgen.core import Composition
-        existing_dirs = [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]
-        if not existing_dirs:
-            print("No existing directories found in output_dir and MP-API fetch failed. Exiting.")
-            return
+        if not results:
+            print(f"No successful LAMMPS runs for {model_name}.")
+            continue
             
-        print(f"Found {len(existing_dirs)} directories in {output_dir}. Running LAMMPS...")
-        for d in existing_dirs:
-            dir_path = os.path.join(output_dir, d)
-            parts = d.split("_")
-            if len(parts) != 2: continue
-            mp_id = parts[0]
-            formula = parts[1]
-            composition = Composition(formula)
-            
-            # Setup is already done, just run
-            success = run_lammps(dir_path, lammps_exec)
-            
-            if success:
-                energy, n_atoms = parse_energy(dir_path)
-                if energy is not None:
-                    # Extract spacegroup from data.lammps
-                    sg_symbol = ""
-                    try:
-                        from ase.io import read
-                        from ase.spacegroup import get_spacegroup
-                        atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
-                        element_map = {i+1: el for i, el in enumerate(elements)}
-                        symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
-                        atoms.set_chemical_symbols(symbols)
-                        sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
-                    except Exception as e:
-                        pass
-                        
-                    res = {
-                        "mp_id": mp_id,
-                        "formula": formula,
-                        "spacegroup": sg_symbol,
-                        "energy": energy,
-                        "n_atoms": n_atoms,
-                        "energy_per_atom": energy / n_atoms
-                    }
-                    for el in elements:
-                        res[f"frac_{el}"] = composition.get_atomic_fraction(el)
-                    results.append(res)
-                else:
-                    print(f"Could not parse energy for {mp_id}")
+        df = pd.DataFrame(results)
+        
+        ref_energies = {}
+        for el in elements:
+            pure_phases = df[df[f"frac_{el}"] == 1.0]
+            if not pure_phases.empty:
+                min_e = pure_phases["energy_per_atom"].min()
+                ref_energies[el] = min_e
+                print(f"Reference energy for pure {el} ({model_name}): {min_e:.4f} eV/atom")
+            else:
+                print(f"WARNING: No successful calculations for pure {el} in {model_name}! Cannot compute formation energies accurately.")
+                ref_energies[el] = 0.0
                 
+        def calc_formation_energy(row):
+            e_ref_sum = sum(row[f"frac_{el}"] * ref_energies[el] for el in elements)
+            return row["energy_per_atom"] - e_ref_sum
+            
+        df["formation_energy"] = df.apply(calc_formation_energy, axis=1)
+        csv_path = os.path.join(output_dir, "results.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"Saved results to {csv_path}")
+        
+        all_results[model_name] = df
+
     if args.setup_only:
-        print(f"Setup complete! {len(docs)} directories created in {output_dir}.")
         return
-        
-    if not results:
-        print("No successful LAMMPS runs. Exiting.")
-        return
-        
-    # Phase 4: Compute Formation Energy
-    df = pd.DataFrame(results)
-    
-    # Find pure element references
-    ref_energies = {}
-    for el in elements:
-        pure_phases = df[df[f"frac_{el}"] == 1.0]
-        if not pure_phases.empty:
-            min_e = pure_phases["energy_per_atom"].min()
-            ref_energies[el] = min_e
-            print(f"Reference energy for pure {el}: {min_e:.4f} eV/atom")
-        else:
-            print(f"WARNING: No successful calculations for pure {el}! Cannot compute formation energies.")
-            # Set to 0 just to allow the script to finish, but the hull will be wrong.
-            ref_energies[el] = 0.0
-            
-    # Calculate formation energy
-    def calc_formation_energy(row):
-        e_ref_sum = sum(row[f"frac_{el}"] * ref_energies[el] for el in elements)
-        return row["energy_per_atom"] - e_ref_sum
-        
-    df["formation_energy"] = df.apply(calc_formation_energy, axis=1)
-    
-    # Save CSV
-    csv_path = os.path.join(output_dir, "results.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"Saved results to {csv_path}")
-    
+
     # Phase 5: Convex Hull Plotting (for binary only)
-    if len(elements) == 2:
+    if len(elements) == 2 and all_results:
         el_A, el_B = elements
-        x_all = df[f"frac_{el_B}"].values
-        y_all = df["formation_energy"].values
-        
-        # Plot all structures in the background
         plt.figure(figsize=(12, 8))
-        plt.scatter(x_all, y_all, color='blue', alpha=0.3, label='All Structures')
         
-        # Filter for strict minimum at each composition to avoid vertical lines on hull ends
-        min_energy_by_x = {}
-        for i, row in df.iterrows():
-            x_val = row[f"frac_{el_B}"]
-            y_val = row["formation_energy"]
-            if y_val <= 0.05:  # Only consider relatively stable points
-                x_round = round(x_val, 4)
-                if x_round not in min_energy_by_x or y_val < min_energy_by_x[x_round]["y"]:
-                    min_energy_by_x[x_round] = {"x": x_val, "y": y_val, "row": row}
-                    
-        valid_points_list = [(v["x"], v["y"]) for v in min_energy_by_x.values()]
-        valid_points = np.array(valid_points_list)
+        line_styles = ['-', '--', ':', '-.']
+        labeled_points = {}  # { (round(x, 4), formula): True }
         
-        if len(valid_points) >= 3:
-            try:
-                hull = ConvexHull(valid_points)
-                
-                # Extract hull vertices
-                hull_x = valid_points[hull.vertices, 0]
-                hull_y = valid_points[hull.vertices, 1]
-                
-                # Sort hull points by x for proper lower hull line plotting
-                sort_idx = np.argsort(hull_x)
-                hull_x = hull_x[sort_idx]
-                hull_y = hull_y[sort_idx]
-                
-                # Plot the lower convex hull line
-                plt.plot(hull_x, hull_y, 'r-', linewidth=2, marker='o', markersize=8, label='Lower Convex Hull')
-                
-                # Label points that are on or very close to the convex hull
-                for x_val, y_val in zip(hull_x, hull_y):
-                    # Find the corresponding row
-                    row = None
-                    for v in min_energy_by_x.values():
-                        if abs(v["x"] - x_val) < 1e-4 and abs(v["y"] - y_val) < 1e-4:
-                            row = v["row"]
-                            break
-                    if row is not None:
-                        sg = row.get("spacegroup", "")
-                        label_text = f"{row['formula']}\n({sg})" if sg else row['formula']
-                        plt.annotate(label_text, (x_val, y_val), 
-                                     textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=9,
-                                     bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.8))
+        for idx, (model_name, df) in enumerate(all_results.items()):
+            style = line_styles[idx % len(line_styles)]
+            x_all = df[f"frac_{el_B}"].values
+            y_all = df["formation_energy"].values
+            
+            plt.scatter(x_all, y_all, alpha=0.3, label=f'{model_name} All Structures')
+            
+            min_energy_by_x = {}
+            for i, row in df.iterrows():
+                x_val = row[f"frac_{el_B}"]
+                y_val = row["formation_energy"]
+                if y_val <= 0.05:
+                    x_round = round(x_val, 4)
+                    if x_round not in min_energy_by_x or y_val < min_energy_by_x[x_round]["y"]:
+                        min_energy_by_x[x_round] = {"x": x_val, "y": y_val, "row": row}
                         
-                plt.xlabel(f"Atomic Fraction of {el_B}")
-                plt.ylabel("Formation Energy (eV/atom)")
-                plt.title(f"Convex Hull for {el_A}-{el_B} System")
-                plt.axhline(0, color='black', linestyle='--', linewidth=1)
-                plt.legend()
-                plt.grid(True, linestyle=':', alpha=0.6)
-                
-                plot_path = os.path.join(output_dir, "convex_hull.png")
-                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-                print(f"Saved convex hull plot to {plot_path}")
-                
-            except Exception as e:
-                print(f"Error plotting convex hull: {e}")
-                plt.scatter(x_all, y_all, color='blue', alpha=0.6)
-                plt.xlabel(f"Atomic Fraction of {el_B}")
-                plt.ylabel("Formation Energy (eV/atom)")
-                plt.savefig(os.path.join(output_dir, "scatter.png"))
+            valid_points_list = [(v["x"], v["y"]) for v in min_energy_by_x.values()]
+            valid_points = np.array(valid_points_list)
+            
+            if len(valid_points) >= 3:
+                try:
+                    hull = ConvexHull(valid_points)
+                    
+                    hull_x = valid_points[hull.vertices, 0]
+                    hull_y = valid_points[hull.vertices, 1]
+                    
+                    sort_idx = np.argsort(hull_x)
+                    hull_x = hull_x[sort_idx]
+                    hull_y = hull_y[sort_idx]
+                    
+                    plt.plot(hull_x, hull_y, linestyle=style, linewidth=2, marker='o', markersize=8, label=f'{model_name} Convex Hull')
+                    
+                    for x_val, y_val in zip(hull_x, hull_y):
+                        row = None
+                        for v in min_energy_by_x.values():
+                            if abs(v["x"] - x_val) < 1e-4 and abs(v["y"] - y_val) < 1e-4:
+                                row = v["row"]
+                                break
+                        if row is not None:
+                            sg = row.get("spacegroup", "")
+                            form = row['formula']
+                            x_round = round(x_val, 4)
+                            
+                            label_key = (x_round, form)
+                            if label_key not in labeled_points:
+                                labeled_points[label_key] = True
+                                formatted_form = format_formula(form)
+                                label_text = f"{formatted_form}\n({sg})" if sg else formatted_form
+                                plt.annotate(label_text, (x_val, y_val), 
+                                             textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=9,
+                                             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.8))
+                except Exception as e:
+                    print(f"Error plotting convex hull for {model_name}: {e}")
+            else:
+                 print(f"Not enough stable points to draw a convex hull for {model_name}.")
+
+        plt.xlabel(f"Atomic Fraction of {el_B}")
+        plt.ylabel("Formation Energy (eV/atom)")
+        plt.title(f"Convex Hull Comparison for {el_A}-{el_B} System")
+        plt.axhline(0, color='black', linestyle='--', linewidth=1)
+        plt.legend()
+        plt.grid(True, linestyle=':', alpha=0.6)
+        
+        general_output_dir = "comparison_output"
+        if len(models) == 1:
+            general_output_dir = models[0].get("output_dir", "comparison_output")
         else:
-             print("Not enough stable points to draw a convex hull.")
-             plt.scatter(x_all, y_all, color='blue', alpha=0.6)
-             plt.xlabel(f"Atomic Fraction of {el_B}")
-             plt.ylabel("Formation Energy (eV/atom)")
-             plt.savefig(os.path.join(output_dir, "scatter.png"))
-             
+            os.makedirs(general_output_dir, exist_ok=True)
+            
+        plot_path = os.path.join(general_output_dir, "convex_hull_comparison.png")
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"Saved convex hull plot to {plot_path}")
+
 if __name__ == "__main__":
     main()
