@@ -77,3 +77,9 @@ lammps_exec: "lmp"
    convex_hull -i input.yaml
    ```
    This will run LAMMPS offline in the prepared directories, extract all energies, and plot the convex hull.
+
+### Plot-Only Mode (Fast Redraw)
+If you just want to tweak plotting settings (e.g., turning `show_only_negative_energies` on or off) without doing any calculations again, you can use the `--plot-only` flag. This will instantly load the existing data and redraw the plot:
+```bash
+convex_hull -i input.yaml --plot-only
+```

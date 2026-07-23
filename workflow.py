@@ -144,6 +144,7 @@ def main():
     parser = argparse.ArgumentParser(description="LAMMPS Convex Hull Workflow")
     parser.add_argument("-i", "--input", dest="config", required=True, help="Path to input YAML configuration file")
     parser.add_argument("--setup-only", action="store_true", help="Only fetch structures and setup directories, do not run LAMMPS")
+    parser.add_argument("--plot-only", action="store_true", help="Skip fetching and calculations, just redraw the plot from existing results.csv")
     
     args = parser.parse_args()
     
@@ -172,169 +173,185 @@ def main():
     if len(elements) != 2:
         print("Warning: This script is currently optimized for binary systems plotting, but calculations will proceed.")
         
-    # Phase 1: Get Structures
-    docs = None
-    
-    try:
-        requests.get("https://api.materialsproject.org", timeout=3)
-        has_internet = True
-    except (requests.ConnectionError, requests.Timeout):
-        has_internet = False
-        
-    if has_internet:
-        try:
-            print("Fetching structures from MP-API...")
-            docs = get_structures(api_key, elements)
-        except Exception as e:
-            print(f"Failed to fetch structures from MP-API. Error: {e}")
-            print("Falling back to existing directories...")
-    else:
-        print("No internet access detected (likely running on a compute node).")
-        print("Bypassing MP-API fetch and falling back to existing directories in output_dir...")
-        
     all_results = {}
     
-    for model in models:
-        model_name = model.get("name", "Model")
-        print(f"\n--- Processing Model: {model_name} ---")
+    if args.plot_only:
+        print("Plot-only mode active. Loading existing results.csv files...")
+        for model in models:
+            model_name = model.get("name", "Model")
+            output_dir = model.get("output_dir", f"hull_workflow_output_{model_name}")
+            csv_path = os.path.join(output_dir, "results.csv")
+            if os.path.exists(csv_path):
+                all_results[model_name] = pd.read_csv(csv_path)
+                print(f"Loaded {csv_path}")
+            else:
+                print(f"Warning: {csv_path} not found for {model_name}")
+                
+        if not all_results:
+            print("No results.csv files found to plot. Exiting.")
+            return
+    else:
+        # Phase 1: Get Structures
+        docs = None
         
-        potential = os.path.abspath(model.get("potential"))
-        lammps_exec = model.get("lammps_exec", "lmp")
-        pair_style = model.get("pair_style", "pair_style pace")
-        pair_coeff = model.get("pair_coeff")
-        output_dir = model.get("output_dir", f"hull_workflow_output_{model_name}")
-        
-        if not pair_coeff:
-            elements_str = " ".join(elements)
-            pair_coeff = f"pair_coeff * * {potential} {elements_str}"
+        try:
+            requests.get("https://api.materialsproject.org", timeout=3)
+            has_internet = True
+        except (requests.ConnectionError, requests.Timeout):
+            has_internet = False
             
-        os.makedirs(output_dir, exist_ok=True)
-        
-        results = []
-        
-        if docs:
-            for doc in docs:
-                mp_id = doc.material_id
-                formula = doc.formula_pretty
+        if has_internet:
+            try:
+                print("Fetching structures from MP-API...")
+                docs = get_structures(api_key, elements)
+            except Exception as e:
+                print(f"Failed to fetch structures from MP-API. Error: {e}")
+                print("Falling back to existing directories...")
+        else:
+            print("No internet access detected (likely running on a compute node).")
+            print("Bypassing MP-API fetch and falling back to existing directories in output_dir...")
+            
+        for model in models:
+            model_name = model.get("name", "Model")
+            print(f"\n--- Processing Model: {model_name} ---")
+            
+            potential = os.path.abspath(model.get("potential"))
+            lammps_exec = model.get("lammps_exec", "lmp")
+            pair_style = model.get("pair_style", "pair_style pace")
+            pair_coeff = model.get("pair_coeff")
+            output_dir = model.get("output_dir", f"hull_workflow_output_{model_name}")
+            
+            if not pair_coeff:
+                elements_str = " ".join(elements)
+                pair_coeff = f"pair_coeff * * {potential} {elements_str}"
                 
-                dir_path = setup_lammps_dir(output_dir, doc, elements, potential, pair_style, pair_coeff)
-                
+            os.makedirs(output_dir, exist_ok=True)
+            
+            results = []
+            
+            if docs:
+                for doc in docs:
+                    mp_id = doc.material_id
+                    formula = doc.formula_pretty
+                    
+                    dir_path = setup_lammps_dir(output_dir, doc, elements, potential, pair_style, pair_coeff)
+                    
+                    if args.setup_only:
+                        continue
+                        
+                    success = run_lammps(dir_path, lammps_exec)
+                    
+                    if success:
+                        energy, n_atoms = parse_energy(dir_path)
+                        if energy is not None:
+                            sg_symbol = ""
+                            try:
+                                from ase.io import read
+                                from ase.spacegroup import get_spacegroup
+                                atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
+                                element_map = {i+1: el for i, el in enumerate(elements)}
+                                symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
+                                atoms.set_chemical_symbols(symbols)
+                                sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
+                            except Exception as e:
+                                pass
+                                
+                            res = {
+                                "mp_id": mp_id,
+                                "formula": formula,
+                                "spacegroup": sg_symbol,
+                                "energy": energy,
+                                "n_atoms": n_atoms,
+                                "energy_per_atom": energy / n_atoms
+                            }
+                            for el in elements:
+                                res[f"frac_{el}"] = doc.composition.get_atomic_fraction(el)
+                            results.append(res)
+            else:
                 if args.setup_only:
+                    print(f"Cannot run --setup-only without internet access for {model_name}. Skipping.")
                     continue
                     
-                success = run_lammps(dir_path, lammps_exec)
-                
-                if success:
-                    energy, n_atoms = parse_energy(dir_path)
-                    if energy is not None:
-                        sg_symbol = ""
-                        try:
-                            from ase.io import read
-                            from ase.spacegroup import get_spacegroup
-                            atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
-                            element_map = {i+1: el for i, el in enumerate(elements)}
-                            symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
-                            atoms.set_chemical_symbols(symbols)
-                            sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
-                        except Exception as e:
-                            pass
+                if not os.path.exists(output_dir):
+                    print(f"Directory {output_dir} does not exist. Skipping.")
+                    continue
+                    
+                existing_dirs = [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]
+                if not existing_dirs:
+                    print(f"No existing directories found in {output_dir} and MP-API fetch failed. Skipping.")
+                    continue
+                    
+                print(f"Found {len(existing_dirs)} directories in {output_dir}. Running LAMMPS...")
+                for d in existing_dirs:
+                    dir_path = os.path.join(output_dir, d)
+                    parts = d.split("_")
+                    if len(parts) != 2: continue
+                    mp_id = parts[0]
+                    formula = parts[1]
+                    composition = Composition(formula)
+                    
+                    success = run_lammps(dir_path, lammps_exec)
+                    
+                    if success:
+                        energy, n_atoms = parse_energy(dir_path)
+                        if energy is not None:
+                            sg_symbol = ""
+                            try:
+                                from ase.io import read
+                                from ase.spacegroup import get_spacegroup
+                                atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
+                                element_map = {i+1: el for i, el in enumerate(elements)}
+                                symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
+                                atoms.set_chemical_symbols(symbols)
+                                sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
+                            except Exception as e:
+                                pass
+                                
+                            res = {
+                                "mp_id": mp_id,
+                                "formula": formula,
+                                "spacegroup": sg_symbol,
+                                "energy": energy,
+                                "n_atoms": n_atoms,
+                                "energy_per_atom": energy / n_atoms
+                            }
+                            for el in elements:
+                                res[f"frac_{el}"] = composition.get_atomic_fraction(el)
+                            results.append(res)
+                        else:
+                            print(f"Could not parse energy for {mp_id}")
                             
-                        res = {
-                            "mp_id": mp_id,
-                            "formula": formula,
-                            "spacegroup": sg_symbol,
-                            "energy": energy,
-                            "n_atoms": n_atoms,
-                            "energy_per_atom": energy / n_atoms
-                        }
-                        for el in elements:
-                            res[f"frac_{el}"] = doc.composition.get_atomic_fraction(el)
-                        results.append(res)
-        else:
             if args.setup_only:
-                print(f"Cannot run --setup-only without internet access for {model_name}. Skipping.")
+                print(f"Setup complete for {model_name}!")
                 continue
                 
-            if not os.path.exists(output_dir):
-                print(f"Directory {output_dir} does not exist. Skipping.")
+            if not results:
+                print(f"No successful LAMMPS runs for {model_name}.")
                 continue
                 
-            existing_dirs = [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]
-            if not existing_dirs:
-                print(f"No existing directories found in {output_dir} and MP-API fetch failed. Skipping.")
-                continue
-                
-            print(f"Found {len(existing_dirs)} directories in {output_dir}. Running LAMMPS...")
-            for d in existing_dirs:
-                dir_path = os.path.join(output_dir, d)
-                parts = d.split("_")
-                if len(parts) != 2: continue
-                mp_id = parts[0]
-                formula = parts[1]
-                composition = Composition(formula)
-                
-                success = run_lammps(dir_path, lammps_exec)
-                
-                if success:
-                    energy, n_atoms = parse_energy(dir_path)
-                    if energy is not None:
-                        sg_symbol = ""
-                        try:
-                            from ase.io import read
-                            from ase.spacegroup import get_spacegroup
-                            atoms = read(os.path.join(dir_path, "data.lammps"), format="lammps-data", style="atomic")
-                            element_map = {i+1: el for i, el in enumerate(elements)}
-                            symbols = [element_map[t] for t in atoms.get_atomic_numbers()]
-                            atoms.set_chemical_symbols(symbols)
-                            sg_symbol = get_spacegroup(atoms, symprec=0.1).symbol
-                        except Exception as e:
-                            pass
-                            
-                        res = {
-                            "mp_id": mp_id,
-                            "formula": formula,
-                            "spacegroup": sg_symbol,
-                            "energy": energy,
-                            "n_atoms": n_atoms,
-                            "energy_per_atom": energy / n_atoms
-                        }
-                        for el in elements:
-                            res[f"frac_{el}"] = composition.get_atomic_fraction(el)
-                        results.append(res)
-                    else:
-                        print(f"Could not parse energy for {mp_id}")
-                        
-        if args.setup_only:
-            print(f"Setup complete for {model_name}!")
-            continue
+            df = pd.DataFrame(results)
             
-        if not results:
-            print(f"No successful LAMMPS runs for {model_name}.")
-            continue
-            
-        df = pd.DataFrame(results)
-        
-        ref_energies = {}
-        for el in elements:
-            pure_phases = df[df[f"frac_{el}"] == 1.0]
-            if not pure_phases.empty:
-                min_e = pure_phases["energy_per_atom"].min()
-                ref_energies[el] = min_e
-                print(f"Reference energy for pure {el} ({model_name}): {min_e:.4f} eV/atom")
-            else:
-                print(f"WARNING: No successful calculations for pure {el} in {model_name}! Cannot compute formation energies accurately.")
-                ref_energies[el] = 0.0
+            ref_energies = {}
+            for el in elements:
+                pure_phases = df[df[f"frac_{el}"] == 1.0]
+                if not pure_phases.empty:
+                    min_e = pure_phases["energy_per_atom"].min()
+                    ref_energies[el] = min_e
+                    print(f"Reference energy for pure {el} ({model_name}): {min_e:.4f} eV/atom")
+                else:
+                    print(f"WARNING: No successful calculations for pure {el} in {model_name}! Cannot compute formation energies accurately.")
+                    ref_energies[el] = 0.0
+                    
+            def calc_formation_energy(row):
+                e_ref_sum = sum(row[f"frac_{el}"] * ref_energies[el] for el in elements)
+                return row["energy_per_atom"] - e_ref_sum
                 
-        def calc_formation_energy(row):
-            e_ref_sum = sum(row[f"frac_{el}"] * ref_energies[el] for el in elements)
-            return row["energy_per_atom"] - e_ref_sum
+            df["formation_energy"] = df.apply(calc_formation_energy, axis=1)
+            csv_path = os.path.join(output_dir, "results.csv")
+            df.to_csv(csv_path, index=False)
+            print(f"Saved results to {csv_path}")
             
-        df["formation_energy"] = df.apply(calc_formation_energy, axis=1)
-        csv_path = os.path.join(output_dir, "results.csv")
-        df.to_csv(csv_path, index=False)
-        print(f"Saved results to {csv_path}")
-        
-        all_results[model_name] = df
+            all_results[model_name] = df
 
     if args.setup_only:
         return
