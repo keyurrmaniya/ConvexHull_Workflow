@@ -371,12 +371,12 @@ def main():
             else:
                 plot_df = df
                 
-            x_all = plot_df[f"frac_{el_B}"].values * 100.0
+            x_all = plot_df[f"frac_{el_B}"].values
             y_all = plot_df["formation_energy"].values
             
             min_energy_by_x = {}
             for i, row in plot_df.iterrows():
-                x_val = row[f"frac_{el_B}"] * 100.0
+                x_val = row[f"frac_{el_B}"]
                 y_val = row["formation_energy"]
                 if y_val <= 0.05:
                     x_round = round(x_val, 4)
@@ -447,7 +447,7 @@ def main():
                  if len(x_all) > 0:
                      plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, label=f'{model_name} (above convex hull)')
 
-        plt.xlabel(f"X$_{{{el_B}}}$ (at. %)", fontsize=14)
+        plt.xlabel(f"X$_{{{el_B}}}$ (atomic fraction)", fontsize=14)
         plt.ylabel(r"E$_f$ (eV/atom)", fontsize=14)
         plt.title(f"{el_A}-{el_B} System", fontsize=16)
         plt.axhline(0, color='black', linestyle='--', linewidth=1)
