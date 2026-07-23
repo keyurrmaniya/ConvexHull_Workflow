@@ -39,13 +39,11 @@ compare_models: true
 show_only_negative_energies: true  # Optional: set to true to hide structures with positive formation energy
 models:
   - name: "GRACE"
-    potential: "/path/to/grace"
-    lammps_exec: "lmp"
     pair_style: "pair_style grace"
-    pair_coeff: "pair_coeff * * /path/to/grace Ni Al"
-    output_dir: "run_grace"
+    pair_coeff: "pair_coeff * * /path/to/grace_potential_file Ni Al"
+    output_dir: "grace_calculations"
+
   - name: "ACE"
-    potential: "/path/to/ace"
     lammps_exec: "lmp"
     pair_style: "pair_style pace"
     pair_coeff: "pair_coeff * * /path/to/ace Ni Al"

@@ -39,7 +39,7 @@ def get_structures(api_key, elements):
     print(f"Found {len(structures)} total structures.")
     return structures
 
-def setup_lammps_dir(base_dir, doc, elements, potential_file, pair_style, pair_coeff):
+def setup_lammps_dir(base_dir, doc, elements, pair_style, pair_coeff):
     """
     Setup directory and LAMMPS input for a given structure.
     """
@@ -163,7 +163,6 @@ def main():
         # Fallback to old format
         models = [{
             "name": "Model",
-            "potential": os.path.abspath(config.get("potential")) if config.get("potential") else "",
             "lammps_exec": config.get("lammps_exec", "lmp"),
             "pair_style": config.get("pair_style", "pair_style pace"),
             "pair_coeff": config.get("pair_coeff"),
@@ -215,16 +214,11 @@ def main():
             model_name = model.get("name", "Model")
             print(f"\n--- Processing Model: {model_name} ---")
             
-            potential = os.path.abspath(model.get("potential")) if model.get("potential") else ""
             lammps_exec = model.get("lammps_exec", "lmp")
             pair_style = model.get("pair_style", "pair_style pace")
             pair_coeff = model.get("pair_coeff")
             output_dir = model.get("output_dir", f"hull_workflow_output_{model_name}")
             
-            if not pair_coeff:
-                elements_str = " ".join(elements)
-                pair_coeff = f"pair_coeff * * {potential} {elements_str}"
-                
             os.makedirs(output_dir, exist_ok=True)
             
             results = []
@@ -234,7 +228,7 @@ def main():
                     mp_id = doc.material_id
                     formula = doc.formula_pretty
                     
-                    dir_path = setup_lammps_dir(output_dir, doc, elements, potential, pair_style, pair_coeff)
+                    dir_path = setup_lammps_dir(output_dir, doc, elements, pair_style, pair_coeff)
                     
                     if args.setup_only:
                         continue
@@ -377,12 +371,12 @@ def main():
             else:
                 plot_df = df
                 
-            x_all = plot_df[f"frac_{el_B}"].values
+            x_all = plot_df[f"frac_{el_B}"].values * 100.0
             y_all = plot_df["formation_energy"].values
             
             min_energy_by_x = {}
             for i, row in plot_df.iterrows():
-                x_val = row[f"frac_{el_B}"]
+                x_val = row[f"frac_{el_B}"] * 100.0
                 y_val = row["formation_energy"]
                 if y_val <= 0.05:
                     x_round = round(x_val, 4)
@@ -440,8 +434,8 @@ def main():
                                 formatted_form = format_formula(form)
                                 label_text = f"{formatted_form}\n({sg})" if sg else formatted_form
                                 plt.annotate(label_text, (x_val, y_val), 
-                                             textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=10,
-                                             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.9))
+                                         textcoords="offset points", xytext=(0,-15), ha='center', va='top', fontsize=10,
+                                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.9))
                 except Exception as e:
                     print(f"Error plotting convex hull for {model_name}: {e}")
                     # If error, plot all as hollow
@@ -453,11 +447,11 @@ def main():
                  if len(x_all) > 0:
                      plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, label=f'{model_name} (above convex hull)')
 
-        plt.xlabel(f"Atomic Fraction of {el_B}")
-        plt.ylabel("Formation Energy (eV/atom)")
-        plt.title(f"Convex Hull Comparison for {el_A}-{el_B} System")
+        plt.xlabel(f"X$_{{{el_B}}}$ (at. %)", fontsize=14)
+        plt.ylabel(r"E$_f$ (eV/atom)", fontsize=14)
+        plt.title(f"{el_A}-{el_B} System", fontsize=16)
         plt.axhline(0, color='black', linestyle='--', linewidth=1)
-        plt.legend()
+        plt.legend(fontsize=12)
         plt.grid(True, linestyle=':', alpha=0.6)
         
         general_output_dir = "comparison_output"
