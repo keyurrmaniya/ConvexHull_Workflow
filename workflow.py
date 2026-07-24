@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
+import matplotlib.lines as mlines
 from scipy.spatial import ConvexHull
 from mp_api.client import MPRester
 from pymatgen.io.ase import AseAtomsAdaptor
@@ -404,9 +405,9 @@ def main():
                     # Plot hull line WITHOUT label so it doesn't show up as a line in the legend
                     plt.plot(hull_x, hull_y, linestyle=style, color=color, linewidth=4, zorder=1)
                     
-                    # Plot hull solid points WITH label
+                    # Plot hull solid points
                     plt.scatter(hull_x, hull_y, marker=marker, facecolors=color, edgecolors=color, 
-                                s=320, zorder=2, label=f'{model_name}')
+                                s=320, zorder=2)
                     
                     # Separate points into hull and non-hull
                     hull_points_set = set((round(x, 4), round(y, 4)) for x, y in zip(hull_x, hull_y))
@@ -419,7 +420,7 @@ def main():
                     # Plot non-hull (hollow)
                     if non_hull_x:
                         plt.scatter(non_hull_x, non_hull_y, marker=marker, facecolors='none', edgecolors=color, 
-                                    alpha=0.6, zorder=2, s=320, label=f'{model_name} (above convex hull)')
+                                    alpha=0.6, zorder=2, s=320)
                     
                     for x_val, y_val in zip(hull_x, hull_y):
                         row = None
@@ -442,12 +443,12 @@ def main():
                     print(f"Error plotting convex hull for {model_name}: {e}")
                     # If error, plot all as hollow
                     if len(x_all) > 0:
-                        plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, s=320, label=f'{model_name} (above convex hull)')
+                        plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, s=320)
             else:
                  print(f"Not enough stable points to draw a convex hull for {model_name}.")
                  # Plot all as hollow if no hull
                  if len(x_all) > 0:
-                     plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, s=320, label=f'{model_name} (above convex hull)')
+                     plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, s=320)
 
         plt.xlabel(f"X$_{{{el_B}}}$ (atomic fraction)", fontsize=26)
         plt.ylabel(r"E$_f$ (eV/atom)", fontsize=26)
@@ -461,7 +462,26 @@ def main():
         ax.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
         
         plt.axhline(0, color='black', linestyle='--', linewidth=2)
-        plt.legend(fontsize=20)
+        
+        # Build custom legend
+        handles = []
+        labels = []
+        handles.append(mlines.Line2D([], [], color='none', marker='none', linestyle='none'))
+        labels.append(r"$\bf{Model}$")
+        for idx, model_name in enumerate(all_results.keys()):
+            marker = markers[idx % len(markers)]
+            color = colors[idx % len(colors)]
+            handles.append(mlines.Line2D([], [], color='none', marker=marker, markerfacecolor=color, markeredgecolor=color, markersize=14))
+            labels.append(model_name)
+            
+        handles.append(mlines.Line2D([], [], color='none', marker='none', linestyle='none'))
+        labels.append(r"$\bf{Convex\ Hull}$")
+        handles.append(mlines.Line2D([], [], color='none', marker='o', markerfacecolor='black', markeredgecolor='black', markersize=14))
+        labels.append("Yes")
+        handles.append(mlines.Line2D([], [], color='none', marker='o', markerfacecolor='none', markeredgecolor='black', markersize=14))
+        labels.append("No")
+        
+        plt.legend(handles, labels, fontsize=20)
         plt.grid(True, linestyle=':', alpha=0.6)
         
         ymin, ymax = plt.ylim()
