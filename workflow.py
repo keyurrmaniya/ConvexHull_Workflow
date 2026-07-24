@@ -450,10 +450,10 @@ def main():
                  if len(x_all) > 0:
                      plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, s=320)
 
-        plt.xlabel(f"X$_{{{el_B}}}$ (atomic fraction)", fontsize=26)
-        plt.ylabel(r"E$_f$ (eV/atom)", fontsize=26)
-        plt.xticks(fontsize=22)
-        plt.yticks(fontsize=22)
+        plt.xlabel(f"X$_{{{el_B}}}$ (atomic fraction)", fontsize=28)
+        plt.ylabel(r"E$_f$ (eV/atom)", fontsize=28)
+        plt.xticks(fontsize=24)
+        plt.yticks(fontsize=24)
         
         ax = plt.gca()
         for spine in ax.spines.values():
