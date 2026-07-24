@@ -405,7 +405,7 @@ def main():
                     
                     # Plot hull solid points WITH label
                     plt.scatter(hull_x, hull_y, marker=marker, facecolors=color, edgecolors=color, 
-                                s=64, zorder=2, label=f'{model_name}')
+                                s=100, zorder=2, label=f'{model_name}')
                     
                     # Separate points into hull and non-hull
                     hull_points_set = set((round(x, 4), round(y, 4)) for x, y in zip(hull_x, hull_y))
@@ -418,7 +418,7 @@ def main():
                     # Plot non-hull (hollow)
                     if non_hull_x:
                         plt.scatter(non_hull_x, non_hull_y, marker=marker, facecolors='none', edgecolors=color, 
-                                    alpha=0.6, zorder=2, label=f'{model_name} (above convex hull)')
+                                    alpha=0.6, zorder=2, s=100, label=f'{model_name} (above convex hull)')
                     
                     for x_val, y_val in zip(hull_x, hull_y):
                         row = None
@@ -436,23 +436,24 @@ def main():
                                 labeled_points[label_key] = True
                                 formatted_form = format_formula(form)
                                 plt.annotate(formatted_form, (x_val, y_val), 
-                                         textcoords="offset points", xytext=(0,-10), ha='center', va='top', fontsize=10)
+                                         textcoords="offset points", xytext=(0,-10), ha='center', va='top', fontsize=14)
                 except Exception as e:
                     print(f"Error plotting convex hull for {model_name}: {e}")
                     # If error, plot all as hollow
                     if len(x_all) > 0:
-                        plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, label=f'{model_name} (above convex hull)')
+                        plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, s=100, label=f'{model_name} (above convex hull)')
             else:
                  print(f"Not enough stable points to draw a convex hull for {model_name}.")
                  # Plot all as hollow if no hull
                  if len(x_all) > 0:
-                     plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, label=f'{model_name} (above convex hull)')
+                     plt.scatter(x_all, y_all, marker=marker, facecolors='none', edgecolors=color, alpha=0.6, s=100, label=f'{model_name} (above convex hull)')
 
-        plt.xlabel(f"X$_{{{el_B}}}$ (atomic fraction)", fontsize=14)
-        plt.ylabel(r"E$_f$ (eV/atom)", fontsize=14)
-        plt.title(f"{el_A}-{el_B} System", fontsize=16)
+        plt.xlabel(f"X$_{{{el_B}}}$ (atomic fraction)", fontsize=18)
+        plt.ylabel(r"E$_f$ (eV/atom)", fontsize=18)
+        plt.xticks(fontsize=16)
+        plt.yticks(fontsize=16)
         plt.axhline(0, color='black', linestyle='--', linewidth=1)
-        plt.legend(fontsize=12)
+        plt.legend(fontsize=14)
         plt.grid(True, linestyle=':', alpha=0.6)
         
         ymin, ymax = plt.ylim()
