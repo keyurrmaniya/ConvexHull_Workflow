@@ -461,8 +461,6 @@ def main():
         ax.tick_params(width=2.5, length=8)
         ax.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
         
-        plt.axhline(0, color='black', linestyle='--', linewidth=2)
-        
         # Build custom legend
         handles = []
         labels = []
@@ -482,7 +480,6 @@ def main():
         labels.append("No")
         
         plt.legend(handles, labels, fontsize=20)
-        plt.grid(True, linestyle=':', alpha=0.6)
         
         ymin, ymax = plt.ylim()
         plt.ylim(ymin - 0.1 * (ymax - ymin), ymax)
