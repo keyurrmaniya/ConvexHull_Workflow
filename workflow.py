@@ -472,7 +472,8 @@ def main():
             os.makedirs(general_output_dir, exist_ok=True)
             
         plot_path = os.path.join(general_output_dir, "convex_hull_comparison.png")
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.subplots_adjust(left=0.18, right=0.95, top=0.95, bottom=0.15)
+        plt.savefig(plot_path, dpi=300)
         print(f"Saved convex hull plot to {plot_path}")
 
 if __name__ == "__main__":
